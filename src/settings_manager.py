@@ -13,12 +13,9 @@ class SettingsManager:
     DEFAULT_SETTINGS = {
         "output_directory": str(Path.home() / "Documents" / "TeamRecordings"),
         "whisper_model": "tiny",  # tiny, base, small, medium, large
-        "audio_device_index": None,  # None = default system device
-        "video_fps": 24,  # Lower default FPS for better performance
-        "video_resolution": "1920x1080",
+        "audio_source": "",  # PulseAudio source name (empty = default monitor)
         "chunk_duration": 30,  # seconds
         "enable_gpu": True,
-        "capture_mode": "fullscreen",  # fullscreen or window
         "audio_sample_rate": 44100,
         "audio_channels": 2,
     }
@@ -106,17 +103,6 @@ class SettingsManager:
         """Get the temporary files directory path"""
         return Path(self.get("output_directory")) / "temp"
 
-    def get_video_resolution(self) -> tuple:
-        """
-        Get video resolution as tuple
-
-        Returns:
-            (width, height) tuple
-        """
-        resolution = self.get("video_resolution", "1920x1080")
-        width, height = resolution.split('x')
-        return (int(width), int(height))
-
     def validate(self) -> bool:
         """
         Validate current settings
@@ -135,11 +121,6 @@ class SettingsManager:
         # Check whisper model is valid
         valid_models = ["tiny", "base", "small", "medium", "large"]
         if self.get("whisper_model") not in valid_models:
-            return False
-
-        # Check FPS is reasonable
-        fps = self.get("video_fps")
-        if not isinstance(fps, int) or fps < 1 or fps > 60:
             return False
 
         return True

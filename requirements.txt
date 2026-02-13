@@ -1,13 +1,8 @@
 # GUI Framework
 PyQt5>=5.15.0
 
-# Audio/Video Capture
-mss>=9.0.0
-opencv-python>=4.8.0
+# Audio Processing
 numpy>=1.24.0
 
 # Transcription
 faster-whisper>=0.10.0
-
-# PyAudio - Install separately (see README for Windows instructions)
-# pyaudio>=0.2.11

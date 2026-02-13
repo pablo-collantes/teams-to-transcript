@@ -4,7 +4,8 @@ Main Window - Primary UI for the application
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTextEdit, QGroupBox,
-    QComboBox, QFileDialog, QLineEdit, QMessageBox, QProgressDialog
+    QComboBox, QFileDialog, QLineEdit, QMessageBox, QProgressDialog,
+    QSlider, QSpinBox
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QFont
@@ -42,13 +43,6 @@ class MainWindow(QMainWindow):
     stop_recording_signal = pyqtSignal()
 
     def __init__(self, capture_manager, settings):
-        """
-        Initialize main window
-
-        Args:
-            capture_manager: CaptureManager instance
-            settings: SettingsManager instance
-        """
         super().__init__()
         self.capture_manager = capture_manager
         self.settings = settings
@@ -67,7 +61,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("Teams Call Recorder & Transcriber")
+        self.setWindowTitle("Teams Call Transcriber")
         self.setGeometry(100, 100, 800, 600)
         self.setStyleSheet(MAIN_WINDOW_STYLE)
 
@@ -80,8 +74,8 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(layout)
 
         # Title
-        title = QLabel("Teams Call Recorder with Live Transcription")
-        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title = QLabel("Teams Call Transcriber")
+        title.setFont(QFont("Sans Serif", 14, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
@@ -115,12 +109,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(settings_layout)
 
     def create_controls_section(self) -> QHBoxLayout:
-        """
-        Create recording controls section
-
-        Returns:
-            QHBoxLayout with controls
-        """
+        """Create recording controls section"""
         layout = QHBoxLayout()
 
         # Start button
@@ -139,12 +128,7 @@ class MainWindow(QMainWindow):
         return layout
 
     def create_settings_section(self) -> QVBoxLayout:
-        """
-        Create settings section
-
-        Returns:
-            QVBoxLayout with settings
-        """
+        """Create settings section"""
         layout = QVBoxLayout()
 
         settings_group = QGroupBox("Settings")
@@ -181,27 +165,106 @@ class MainWindow(QMainWindow):
 
         settings_layout.addLayout(model_layout)
 
-        # Video FPS
-        fps_layout = QHBoxLayout()
-        fps_layout.addWidget(QLabel("Video FPS:"))
+        # Audio Source
+        source_layout = QHBoxLayout()
+        source_layout.addWidget(QLabel("Audio Source:"))
 
-        self.fps_combo = QComboBox()
-        self.fps_combo.addItems(["15", "24", "30", "60"])
-        self.fps_combo.setCurrentText(str(self.settings.get("video_fps")))
-        self.fps_combo.currentTextChanged.connect(self.on_fps_changed)
-        fps_layout.addWidget(self.fps_combo)
+        self.source_combo = QComboBox()
+        self.source_combo.setMinimumWidth(300)
+        self.source_combo.currentIndexChanged.connect(self.on_source_changed)
+        source_layout.addWidget(self.source_combo)
 
-        fps_layout.addStretch()
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(self._populate_audio_sources)
+        source_layout.addWidget(refresh_button)
 
-        settings_layout.addLayout(fps_layout)
+        source_layout.addStretch()
+
+        settings_layout.addLayout(source_layout)
+
+        # Populate audio sources
+        self._populate_audio_sources()
+
+        # Audio chunk duration
+        chunk_layout = QVBoxLayout()
+        chunk_header = QHBoxLayout()
+        chunk_header.addWidget(QLabel("Audio Chunk Duration:"))
+
+        self.chunk_spinbox = QSpinBox()
+        self.chunk_spinbox.setRange(5, 120)
+        self.chunk_spinbox.setSuffix(" seconds")
+        self.chunk_spinbox.setValue(self.settings.get("chunk_duration", 30))
+        self.chunk_spinbox.setFixedWidth(120)
+        chunk_header.addWidget(self.chunk_spinbox)
+
+        chunk_header.addStretch()
+        chunk_layout.addLayout(chunk_header)
+
+        self.chunk_slider = QSlider(Qt.Horizontal)
+        self.chunk_slider.setRange(5, 120)
+        self.chunk_slider.setValue(self.settings.get("chunk_duration", 30))
+        self.chunk_slider.setTickPosition(QSlider.TicksBelow)
+        self.chunk_slider.setTickInterval(15)
+        chunk_layout.addWidget(self.chunk_slider)
+
+        chunk_labels_layout = QHBoxLayout()
+        chunk_labels_layout.addWidget(QLabel("5s - Faster preview"))
+        chunk_labels_layout.addStretch()
+        chunk_labels_layout.addWidget(QLabel("120s - Fewer, larger chunks"))
+        chunk_layout.addLayout(chunk_labels_layout)
+
+        chunk_hint = QLabel(
+            "Controls how often audio is sent to Whisper for transcription. "
+            "Shorter = faster live preview. No audio is lost between chunks."
+        )
+        chunk_hint.setWordWrap(True)
+        chunk_hint.setStyleSheet("color: #888888; font-size: 11px;")
+        chunk_layout.addWidget(chunk_hint)
+
+        # Sync slider and spinbox
+        self.chunk_slider.valueChanged.connect(self.chunk_spinbox.setValue)
+        self.chunk_spinbox.valueChanged.connect(self.chunk_slider.setValue)
+        self.chunk_spinbox.valueChanged.connect(self.on_chunk_duration_changed)
+
+        settings_layout.addLayout(chunk_layout)
 
         layout.addWidget(settings_group)
 
         return layout
 
+    def _populate_audio_sources(self):
+        """Populate audio source dropdown from PulseAudio"""
+        import sys
+        sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
+        from audio_recorder import AudioRecorder
+
+        self.source_combo.blockSignals(True)
+        self.source_combo.clear()
+
+        # Add default option
+        self.source_combo.addItem("(Default monitor source)", "")
+
+        sources = AudioRecorder.list_audio_sources()
+        for source_name, label in sources:
+            self.source_combo.addItem(label, source_name)
+
+        # Select saved source
+        saved_source = self.settings.get("audio_source", "")
+        if saved_source:
+            idx = self.source_combo.findData(saved_source)
+            if idx >= 0:
+                self.source_combo.setCurrentIndex(idx)
+
+        self.source_combo.blockSignals(False)
+
+    def on_source_changed(self, index):
+        """Handle audio source change"""
+        source = self.source_combo.itemData(index)
+        if source is not None:
+            self.settings.set("audio_source", source)
+
     def on_start_recording(self):
         """Handle start recording button click"""
-        # Disable button to prevent double-click
         self.start_button.setEnabled(False)
 
         # Show loading dialog
@@ -229,21 +292,17 @@ class MainWindow(QMainWindow):
     @pyqtSlot(bool, str)
     def on_recording_started(self, success, message):
         """Called when recording worker finishes"""
-        # Close progress dialog
         if hasattr(self, 'progress'):
             self.progress.close()
 
         if success:
-            # Recording started successfully
             self.stop_button.setEnabled(True)
             self.transcript_text.clear()
             self.update_status("Recording started")
         else:
-            # Recording failed
             self.start_button.setEnabled(True)
             self.update_status("Failed to start recording")
 
-            # Show error dialog
             QMessageBox.critical(
                 self,
                 "Recording Error",
@@ -258,21 +317,11 @@ class MainWindow(QMainWindow):
             self.stop_button.setEnabled(False)
 
     def update_status(self, message: str):
-        """
-        Update status label
-
-        Args:
-            message: Status message
-        """
+        """Update status label"""
         self.status_label.setText(message)
 
     def update_transcript(self, transcript: str):
-        """
-        Update transcript preview
-
-        Args:
-            transcript: New transcript text
-        """
+        """Update transcript preview"""
         self.transcript_text.append(transcript)
         self.transcript_text.append("")  # Add blank line
 
@@ -285,12 +334,14 @@ class MainWindow(QMainWindow):
         if self.capture_manager.is_recording:
             status = self.capture_manager.get_recording_status()
 
+            elapsed = status.get('elapsed_time', 0)
+            minutes = int(elapsed) // 60
+            seconds = int(elapsed) % 60
+
             stats_text = (
                 f"Recording... | "
-                f"Frames: {status.get('frames_recorded', 0)} | "
-                f"FPS: {status.get('actual_fps', 0):.1f} | "
                 f"Chunks: {status.get('chunks_processed', 0)} | "
-                f"Time: {status.get('elapsed_time', 0):.1f}s"
+                f"Time: {minutes:02d}:{seconds:02d}"
             )
 
             self.stats_label.setText(stats_text)
@@ -310,26 +361,15 @@ class MainWindow(QMainWindow):
             self.output_dir_input.setText(directory)
 
     def on_model_changed(self, model: str):
-        """
-        Handle Whisper model change
-
-        Args:
-            model: Selected model name
-        """
+        """Handle Whisper model change"""
         self.settings.set("whisper_model", model)
 
-    def on_fps_changed(self, fps: str):
-        """
-        Handle FPS change
-
-        Args:
-            fps: Selected FPS value
-        """
-        self.settings.set("video_fps", int(fps))
+    def on_chunk_duration_changed(self, value: int):
+        """Handle chunk duration change"""
+        self.settings.set("chunk_duration", value)
 
     def closeEvent(self, event):
         """Handle window close event"""
-        # Stop recording if active
         if self.capture_manager.is_recording:
             self.capture_manager.stop_recording()
 

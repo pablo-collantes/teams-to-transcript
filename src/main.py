@@ -1,7 +1,8 @@
 """
-Main Entry Point - Teams Call Recorder with Transcription
+Main Entry Point - Teams Call Transcriber
 """
 import sys
+import shutil
 from PyQt5.QtWidgets import QApplication
 from settings_manager import SettingsManager
 from capture_manager import CaptureManager
@@ -18,37 +19,27 @@ def check_dependencies():
         missing.append("PyQt5")
 
     try:
-        import pyaudio
-    except ImportError:
-        missing.append("pyaudio")
-
-    try:
-        import mss
-    except ImportError:
-        missing.append("mss")
-
-    try:
-        import cv2
-    except ImportError:
-        missing.append("opencv-python")
-
-    try:
         import faster_whisper
     except ImportError:
         missing.append("faster-whisper")
+
+    if not shutil.which("pactl"):
+        missing.append("pactl (install pipewire-pulse or pulseaudio)")
+
+    if not shutil.which("parec"):
+        missing.append("parec (install pipewire-pulse or pulseaudio)")
 
     if missing:
         print("\n" + "!" * 60)
         print("ERROR: Missing required dependencies!")
         print("!" * 60)
-        print("\nMissing packages:")
+        print("\nMissing:")
         for pkg in missing:
             print(f"  - {pkg}")
-        print("\nPlease install missing packages:")
-        if "pyaudio" in missing:
-            print("  pip install pyaudio")
-            print("  (If this fails, see README for Windows PyAudio installation)")
-        print(f"  pip install {' '.join([p for p in missing if p != 'pyaudio'])}")
+        print("\nInstall Python packages:")
+        print("  pip install -r requirements.txt")
+        print("\nInstall system packages (Arch Linux):")
+        print("  sudo pacman -S pipewire-pulse")
         print("\n" + "!" * 60 + "\n")
         return False
 
@@ -58,7 +49,7 @@ def check_dependencies():
 def main():
     """Main application entry point"""
     print("=" * 60)
-    print("Teams Call Recorder with Live Transcription")
+    print("Teams Call Transcriber")
     print("=" * 60)
 
     # Check dependencies
@@ -77,7 +68,14 @@ def main():
 
     print(f"Output directory: {settings.get('output_directory')}")
     print(f"Whisper model: {settings.get('whisper_model')}")
-    print(f"Video FPS: {settings.get('video_fps')}")
+
+    audio_source = settings.get("audio_source")
+    if audio_source:
+        print(f"Audio source: {audio_source}")
+    else:
+        from audio_recorder import AudioRecorder
+        default = AudioRecorder.get_default_monitor_source()
+        print(f"Audio source: {default} (default monitor)")
 
     # Initialize capture manager
     print("Initializing capture manager...")
@@ -85,7 +83,7 @@ def main():
 
     # Create Qt application
     app = QApplication(sys.argv)
-    app.setApplicationName("Teams Call Recorder")
+    app.setApplicationName("Teams Call Transcriber")
 
     # Create and show main window
     print("Starting UI...")

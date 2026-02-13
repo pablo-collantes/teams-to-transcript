@@ -1,13 +1,12 @@
 """
-Capture Manager - Orchestrates audio, video, and transcription
+Capture Manager - Orchestrates audio capture and transcription
 """
 import os
-import shutil
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Callable
 from audio_recorder import AudioRecorder
-from video_recorder import VideoRecorder
 from transcription_engine import TranscriptionEngine
 from settings_manager import SettingsManager
 
@@ -16,37 +15,25 @@ class CaptureManager:
     """Manages the complete recording workflow"""
 
     def __init__(self, settings: SettingsManager):
-        """
-        Initialize capture manager
-
-        Args:
-            settings: Settings manager instance
-        """
         self.settings = settings
         self.is_recording = False
 
         # Component instances
         self.audio_recorder: Optional[AudioRecorder] = None
-        self.video_recorder: Optional[VideoRecorder] = None
         self.transcription_engine: Optional[TranscriptionEngine] = None
 
         # Current recording files
-        self.current_video_file = None
         self.current_audio_file = None
         self.current_transcript_file = None
         self.audio_chunks = []
+        self.start_time = 0.0
 
         # Callbacks
         self.on_status_update: Optional[Callable[[str], None]] = None
         self.on_transcript_update: Optional[Callable[[str], None]] = None
 
     def start_recording(self) -> bool:
-        """
-        Start recording audio, video, and transcription
-
-        Returns:
-            True if started successfully
-        """
+        """Start recording audio and transcription. Returns True if started successfully."""
         if self.is_recording:
             self._update_status("Already recording")
             return False
@@ -59,13 +46,13 @@ class CaptureManager:
             recordings_dir = self.settings.get_recordings_dir()
             temp_dir = self.settings.get_temp_dir()
 
-            self.current_video_file = str(recordings_dir / f"{base_name}.mp4")
             self.current_audio_file = str(recordings_dir / f"{base_name}.wav")
             self.current_transcript_file = str(recordings_dir / f"{base_name}.txt")
 
             # Clear temporary directory
             self._clear_temp_dir(temp_dir)
             self.audio_chunks = []
+            self.start_time = time.time()
 
             # Initialize transcription engine
             try:
@@ -96,6 +83,7 @@ class CaptureManager:
                     sample_rate=self.settings.get("audio_sample_rate"),
                     channels=self.settings.get("audio_channels"),
                     chunk_duration=self.settings.get("chunk_duration"),
+                    audio_source=self.settings.get("audio_source", ""),
                     on_chunk_complete=self._on_audio_chunk
                 )
 
@@ -112,32 +100,6 @@ class CaptureManager:
                     self.transcription_engine.stop()
                 return False
 
-            # Initialize video recorder
-            try:
-                self._update_status("Initializing video recorder...")
-                self.video_recorder = VideoRecorder(
-                    output_file=self.current_video_file,
-                    fps=self.settings.get("video_fps"),
-                    resolution=self.settings.get_video_resolution(),
-                    monitor_number=1  # Primary monitor
-                )
-
-                if not self.video_recorder.start():
-                    self._update_status("Failed to start video recorder")
-                    self.audio_recorder.stop()
-                    self.transcription_engine.stop()
-                    return False
-            except Exception as e:
-                import traceback
-                print(f"ERROR in video recorder: {e}")
-                print(traceback.format_exc())
-                self._update_status(f"Video recorder error: {e}")
-                if self.audio_recorder:
-                    self.audio_recorder.stop()
-                if self.transcription_engine:
-                    self.transcription_engine.stop()
-                return False
-
             self.is_recording = True
             self._update_status(f"Recording started: {base_name}")
             return True
@@ -150,12 +112,7 @@ class CaptureManager:
             return False
 
     def stop_recording(self) -> bool:
-        """
-        Stop recording and finalize all files
-
-        Returns:
-            True if stopped successfully
-        """
+        """Stop recording and finalize all files. Returns True if stopped successfully."""
         if not self.is_recording:
             self._update_status("Not currently recording")
             return False
@@ -163,15 +120,9 @@ class CaptureManager:
         try:
             self._update_status("Stopping recording...")
 
-            # Stop video recorder
-            if self.video_recorder:
-                self.video_recorder.stop()
-                self.video_recorder.cleanup()
-
             # Stop audio recorder
             if self.audio_recorder:
                 self.audio_recorder.stop()
-                # Save final combined audio
                 self.audio_recorder.save_final_audio(self.audio_chunks)
                 self.audio_recorder.cleanup()
 
@@ -185,9 +136,10 @@ class CaptureManager:
             self._clear_temp_dir(temp_dir)
 
             self.is_recording = False
-            self._update_status(f"Recording saved: {Path(self.current_video_file).name}")
+            self._update_status(
+                f"Recording saved: {Path(self.current_transcript_file).name}"
+            )
 
-            # Show summary
             self._show_summary()
 
             return True
@@ -197,46 +149,25 @@ class CaptureManager:
             return False
 
     def _on_audio_chunk(self, chunk_file: str) -> None:
-        """
-        Callback when audio chunk is saved
-
-        Args:
-            chunk_file: Path to saved chunk file
-        """
+        """Callback when audio chunk is saved"""
         self.audio_chunks.append(chunk_file)
 
-        # Send to transcription engine
         if self.transcription_engine:
             self.transcription_engine.add_chunk(chunk_file)
 
     def _on_transcript_chunk(self, transcript: str) -> None:
-        """
-        Callback when new transcript is available
-
-        Args:
-            transcript: Transcribed text
-        """
+        """Callback when new transcript is available"""
         if self.on_transcript_update:
             self.on_transcript_update(transcript)
 
     def _update_status(self, message: str) -> None:
-        """
-        Update status message
-
-        Args:
-            message: Status message
-        """
+        """Update status message"""
         print(f"[CaptureManager] {message}")
         if self.on_status_update:
             self.on_status_update(message)
 
     def _clear_temp_dir(self, temp_dir: Path) -> None:
-        """
-        Clear temporary directory
-
-        Args:
-            temp_dir: Path to temporary directory
-        """
+        """Clear temporary directory"""
         try:
             if temp_dir.exists():
                 for file in temp_dir.glob("*.wav"):
@@ -249,9 +180,9 @@ class CaptureManager:
         try:
             summary = "\n=== Recording Summary ===\n"
 
-            if self.current_video_file and os.path.exists(self.current_video_file):
-                video_size = os.path.getsize(self.current_video_file) / (1024 * 1024)  # MB
-                summary += f"Video: {Path(self.current_video_file).name} ({video_size:.2f} MB)\n"
+            if self.current_audio_file and os.path.exists(self.current_audio_file):
+                audio_size = os.path.getsize(self.current_audio_file) / (1024 * 1024)
+                summary += f"Audio: {Path(self.current_audio_file).name} ({audio_size:.2f} MB)\n"
 
             if self.current_transcript_file and os.path.exists(self.current_transcript_file):
                 with open(self.current_transcript_file, 'r', encoding='utf-8') as f:
@@ -262,10 +193,8 @@ class CaptureManager:
                 chunk_count = self.transcription_engine.get_transcript_count()
                 summary += f"Chunks transcribed: {chunk_count}\n"
 
-            if self.video_recorder:
-                stats = self.video_recorder.get_stats()
-                summary += f"Frames recorded: {stats['frames_recorded']}\n"
-                summary += f"Duration: {stats['elapsed_time']:.2f}s\n"
+            elapsed = time.time() - self.start_time if self.start_time else 0
+            summary += f"Duration: {elapsed:.1f}s\n"
 
             summary += "=" * 30
 
@@ -275,45 +204,27 @@ class CaptureManager:
             print(f"Error generating summary: {e}")
 
     def get_recording_status(self) -> dict:
-        """
-        Get current recording status
-
-        Returns:
-            Dictionary with recording status information
-        """
+        """Get current recording status"""
         status = {
             "is_recording": self.is_recording,
-            "video_file": self.current_video_file,
+            "audio_file": self.current_audio_file,
             "transcript_file": self.current_transcript_file,
             "chunks_processed": 0,
-            "frames_recorded": 0
+            "elapsed_time": 0.0,
         }
 
         if self.transcription_engine:
             status["chunks_processed"] = self.transcription_engine.get_transcript_count()
 
-        if self.video_recorder:
-            stats = self.video_recorder.get_stats()
-            status["frames_recorded"] = stats["frames_recorded"]
-            status["elapsed_time"] = stats["elapsed_time"]
-            status["actual_fps"] = stats["actual_fps"]
+        if self.start_time and self.is_recording:
+            status["elapsed_time"] = time.time() - self.start_time
 
         return status
 
     def set_status_callback(self, callback: Callable[[str], None]) -> None:
-        """
-        Set callback for status updates
-
-        Args:
-            callback: Function to call with status messages
-        """
+        """Set callback for status updates"""
         self.on_status_update = callback
 
     def set_transcript_callback(self, callback: Callable[[str], None]) -> None:
-        """
-        Set callback for transcript updates
-
-        Args:
-            callback: Function to call with new transcripts
-        """
+        """Set callback for transcript updates"""
         self.on_transcript_update = callback
