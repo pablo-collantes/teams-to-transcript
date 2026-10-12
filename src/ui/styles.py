@@ -51,6 +51,14 @@ QPushButton#stopButton:hover {
     background-color: #e04555;
 }
 
+QPushButton#screenshotButton {
+    background-color: #007acc;
+}
+
+QPushButton#screenshotButton:hover {
+    background-color: #1a8ad4;
+}
+
 QLabel {
     color: #ffffff;
 }
@@ -365,5 +373,72 @@ QMenu {
 
 QMenu::item:selected {
     background-color: #007acc;
+}
+
+QTabWidget::pane {
+    border: 1px solid #555555;
+    background-color: #2b2b2b;
+}
+
+QTabBar::tab {
+    background-color: #3d3d3d;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 8px 20px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background-color: #2b2b2b;
+    border-bottom: 1px solid #2b2b2b;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #4a4a4a;
+}
+
+QListWidget {
+    background-color: #1e1e1e;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    color: #d4d4d4;
+    padding: 4px;
+}
+
+QListWidget::item {
+    padding: 4px 8px;
+}
+
+QListWidget::item:selected {
+    background-color: #007acc;
+    color: #ffffff;
+}
+
+QListWidget::item:hover {
+    background-color: #3d3d3d;
+}
+
+QCheckBox {
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    background-color: #3d3d3d;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #007acc;
+    border-color: #007acc;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #007acc;
 }
 """

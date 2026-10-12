@@ -4,5 +4,17 @@ PyQt5>=5.15.0
 # Audio Processing
 numpy>=1.24.0
 
+# Audio capture backend for Windows/macOS (Linux uses pactl/parec directly)
+soundcard>=0.4.4 ; sys_platform == 'win32' or sys_platform == 'darwin'
+
 # Transcription
 faster-whisper>=0.10.0
+
+# Web Server
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+python-multipart>=0.0.6
+
+# Speaker diarization is optional and heavy (pulls in PyTorch, ~GBs).
+# Only needed with an hf_token in settings:
+#   pip install -r requirements-diarization.txt

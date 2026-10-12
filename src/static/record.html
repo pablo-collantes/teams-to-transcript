@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#101418">
+<title>Remote Recorder</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #101418; color: #e6e9ec;
+    display: flex; flex-direction: column;
+    padding: 16px; gap: 14px; max-width: 560px; margin: 0 auto;
+  }
+  h1 { font-size: 1.05rem; font-weight: 600; color: #9aa4ae; letter-spacing: .04em; }
+  h1 span { color: #4cc38a; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  input[type=text], select {
+    background: #1a2026; color: #e6e9ec; border: 1px solid #2a323a;
+    border-radius: 10px; padding: 12px 14px; font-size: 1rem; flex: 1;
+    -webkit-appearance: none; appearance: none;
+  }
+  select { flex: 0 0 auto; }
+  #recBtn {
+    border: none; border-radius: 16px; padding: 22px;
+    font-size: 1.25rem; font-weight: 700; color: #fff;
+    background: #2e7d5b; width: 100%; cursor: pointer;
+    transition: background .2s;
+  }
+  #recBtn.recording { background: #b3403d; }
+  #recBtn:disabled { background: #2a323a; color: #6b7580; }
+  #photoBtn {
+    border: 1px solid #2a323a; border-radius: 12px; padding: 12px;
+    font-size: 1rem; background: #1a2026; color: #e6e9ec; width: 100%;
+    cursor: pointer;
+  }
+  #photoBtn:disabled { color: #4a545e; }
+  .stats { display: flex; justify-content: space-between; font-size: .9rem; color: #9aa4ae; }
+  .stats b { color: #e6e9ec; font-variant-numeric: tabular-nums; }
+  #status { font-size: .85rem; color: #7f8a94; min-height: 1.2em; }
+  #status.err { color: #e08784; }
+  #feed {
+    flex: 1; overflow-y: auto; background: #151a20; border: 1px solid #222a32;
+    border-radius: 12px; padding: 12px; font-size: .95rem; line-height: 1.45;
+    min-height: 120px;
+  }
+  #feed .t { color: #5c96c9; font-size: .78rem; font-variant-numeric: tabular-nums; }
+  #feed p { margin-bottom: 10px; }
+  #feed .empty { color: #4a545e; }
+  #warn {
+    display: none; background: #3a2a1a; border: 1px solid #7a5a2a;
+    border-radius: 12px; padding: 12px; font-size: .88rem; color: #e8c98a;
+    line-height: 1.4;
+  }
+  #warn code { background: #1a2026; padding: 1px 5px; border-radius: 5px; }
+</style>
+</head>
+<body>
+  <h1>REMOTE RECORDER <span id="dot">●</span></h1>
+
+  <div id="warn"></div>
+
+  <div class="row">
+    <input type="text" id="name" placeholder="Recording name" value="phone">
+    <select id="chunkSecs">
+      <option value="10">10s</option>
+      <option value="15" selected>15s</option>
+      <option value="30">30s</option>
+    </select>
+  </div>
+
+  <button id="recBtn">Start Recording</button>
+  <button id="photoBtn" disabled>&#128247; Attach Photo</button>
+  <input type="file" id="photoFile" accept="image/*" capture="environment" hidden>
+
+  <div class="stats">
+    <span>elapsed <b id="elapsed">00:00</b></span>
+    <span>chunks <b id="chunks">0</b></span>
+    <span>segments <b id="segs">0</b></span>
+    <span>retries <b id="errs">0</b></span>
+  </div>
+  <div id="status">idle</div>
+
+  <div id="feed"><p class="empty">Transcribed speech will appear here.</p></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+let ctx = null, stream = null, srcNode = null, procNode = null, zeroGain = null;
+let session = null, chunkSecs = 15;
+let floatBufs = [], bufSamples = 0, sampleRate = 48000;
+let pending = [], uploading = false, errs = 0, chunksSent = 0, segCount = 0;
+let flushTimer = null, tickTimer = null, startedAt = 0, wakeLock = null;
+
+// Mic capture needs a secure context: https (tailscale serve) or localhost.
+if (!window.isSecureContext || !navigator.mediaDevices) {
+  const w = $("warn");
+  w.style.display = "block";
+  w.innerHTML = "This page is served over plain HTTP, so the browser blocks " +
+    "microphone access. On the PC run <code>tailscale serve --bg " +
+    "http://TAILSCALE_IP:8010</code> once, then open " +
+    "<code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net/record</code> instead.";
+  $("recBtn").disabled = true;
+}
+
+function setStatus(msg, isErr) {
+  $("status").textContent = msg;
+  $("status").className = isErr ? "err" : "";
+}
+
+function fmtElapsed(s) {
+  const m = Math.floor(s / 60), ss = Math.floor(s % 60);
+  const h = Math.floor(m / 60);
+  const mm = String(m % 60).padStart(2, "0"), sss = String(ss).padStart(2, "0");
+  return h ? `${h}:${mm}:${sss}` : `${mm}:${sss}`;
+}
+
+function encodeWav(f32, rate) {
+  const buf = new ArrayBuffer(44 + f32.length * 2);
+  const v = new DataView(buf);
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, "RIFF"); v.setUint32(4, 36 + f32.length * 2, true); ws(8, "WAVE");
+  ws(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  ws(36, "data"); v.setUint32(40, f32.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < f32.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+function takeWav() {
+  if (!bufSamples) return null;
+  const all = new Float32Array(bufSamples);
+  let o = 0;
+  for (const b of floatBufs) { all.set(b, o); o += b.length; }
+  floatBufs = []; bufSamples = 0;
+  return encodeWav(all, sampleRate);
+}
+
+function showSegments(segments) {
+  if (!segments || !segments.length) return;
+  const feed = $("feed");
+  const empty = feed.querySelector(".empty");
+  if (empty) empty.remove();
+  for (const s of segments) {
+    const p = document.createElement("p");
+    const t = document.createElement("span");
+    t.className = "t";
+    t.textContent = `[${s.start_hms}] `;
+    p.appendChild(t);
+    p.appendChild(document.createTextNode(s.text));
+    feed.appendChild(p);
+    segCount++;
+  }
+  $("segs").textContent = segCount;
+  feed.scrollTop = feed.scrollHeight;
+}
+
+async function flush() {
+  const wav = takeWav();
+  if (wav) pending.push(wav);
+  if (uploading || !session) return;
+  uploading = true;
+  try {
+    while (pending.length) {
+      const blob = pending[0];
+      const r = await fetch(`/ingest/chunk?session=${encodeURIComponent(session)}`, {
+        method: "POST", headers: { "Content-Type": "audio/wav" }, body: blob,
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      pending.shift();
+      chunksSent++;
+      $("chunks").textContent = chunksSent;
+      showSegments(data.segments);
+      if (data.error) setStatus(data.error, true);
+      else setStatus(`recording — last chunk at ${fmtElapsed(data.audio_seconds)}`);
+    }
+  } catch (e) {
+    errs++;
+    $("errs").textContent = errs;
+    setStatus(`upload failed (${e.message}) — buffering, will retry`, true);
+    if (pending.length > 40) pending.splice(0, pending.length - 40);
+  } finally {
+    uploading = false;
+  }
+}
+
+async function grabWakeLock() {
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && session) { grabWakeLock(); flush(); }
+});
+
+async function start() {
+  $("recBtn").disabled = true;
+  try {
+    setStatus("requesting microphone…");
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+    });
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    sampleRate = ctx.sampleRate;
+    chunkSecs = parseInt($("chunkSecs").value, 10);
+
+    setStatus("starting session on PC…");
+    const resp = await fetch("/ingest/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("name").value.trim() || "phone", chunk_seconds: chunkSecs }),
+    });
+    if (!resp.ok) throw new Error(`start failed: HTTP ${resp.status} ${await resp.text()}`);
+    const info = await resp.json();
+    session = info.session;
+
+    srcNode = ctx.createMediaStreamSource(stream);
+    procNode = ctx.createScriptProcessor(4096, 1, 1);
+    procNode.onaudioprocess = e => {
+      const d = e.inputBuffer.getChannelData(0);
+      floatBufs.push(new Float32Array(d));
+      bufSamples += d.length;
+    };
+    zeroGain = ctx.createGain();
+    zeroGain.gain.value = 0; // processor must reach destination, but silently
+    srcNode.connect(procNode);
+    procNode.connect(zeroGain);
+    zeroGain.connect(ctx.destination);
+
+    startedAt = Date.now();
+    chunksSent = 0; segCount = 0; errs = 0; pending = [];
+    $("chunks").textContent = "0"; $("segs").textContent = "0"; $("errs").textContent = "0";
+    $("feed").innerHTML = '<p class="empty">Transcribed speech will appear here.</p>';
+
+    flushTimer = setInterval(flush, chunkSecs * 1000);
+    tickTimer = setInterval(() => {
+      $("elapsed").textContent = fmtElapsed((Date.now() - startedAt) / 1000);
+    }, 1000);
+    grabWakeLock();
+
+    $("recBtn").textContent = "Stop Recording";
+    $("recBtn").classList.add("recording");
+    $("photoBtn").disabled = false;
+    $("dot").style.color = "#e05a56";
+    setStatus(`recording → ${info.session} (${info.engine})`);
+  } catch (e) {
+    setStatus(e.message, true);
+    cleanupAudio();
+    session = null;
+  } finally {
+    $("recBtn").disabled = false;
+  }
+}
+
+function cleanupAudio() {
+  if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  try { procNode && procNode.disconnect(); } catch (e) {}
+  try { srcNode && srcNode.disconnect(); } catch (e) {}
+  try { zeroGain && zeroGain.disconnect(); } catch (e) {}
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (ctx) { ctx.close(); ctx = null; }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  procNode = srcNode = zeroGain = null;
+}
+
+async function stop() {
+  $("recBtn").disabled = true;
+  cleanupAudio();
+  setStatus("sending final chunk…");
+  await flush();
+  try {
+    const r = await fetch(`/ingest/stop?session=${encodeURIComponent(session)}`, { method: "POST" });
+    const data = await r.json();
+    setStatus(`saved: ${data.session} — ${data.duration}, ${data.segment_count} segments`);
+  } catch (e) {
+    setStatus("stop request failed: " + e.message, true);
+  }
+  session = null;
+  $("recBtn").textContent = "Start Recording";
+  $("recBtn").classList.remove("recording");
+  $("recBtn").disabled = false;
+  $("photoBtn").disabled = true;
+  $("dot").style.color = "";
+}
+
+$("recBtn").addEventListener("click", () => (session ? stop() : start()));
+
+$("photoBtn").addEventListener("click", () => $("photoFile").click());
+$("photoFile").addEventListener("change", async () => {
+  const file = $("photoFile").files[0];
+  $("photoFile").value = "";
+  if (!file || !session) return;
+  setStatus("uploading photo…");
+  try {
+    const r = await fetch(`/ingest/photo?session=${encodeURIComponent(session)}`, {
+      method: "POST", headers: { "Content-Type": file.type || "image/jpeg" }, body: file,
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    setStatus(`photo attached at ${data.photo.elapsed_hms}`);
+  } catch (e) {
+    setStatus("photo upload failed: " + e.message, true);
+  }
+});
+
+window.addEventListener("beforeunload", e => {
+  if (session) { e.preventDefault(); e.returnValue = ""; }
+});
+</script>
+</body>
+</html>

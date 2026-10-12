@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Teams-to-Transcript</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Teams-to-Transcript</h1>
+    <span id="server-status" class="status-badge">connecting...</span>
+  </header>
+
+  <main>
+    <!-- Upload Section -->
+    <section id="upload-section" class="card">
+      <h2>Upload Audio</h2>
+
+      <div id="drop-zone" class="drop-zone">
+        <p>Drag &amp; drop an audio file here</p>
+        <p class="hint">or click to browse</p>
+        <input type="file" id="file-input" accept="audio/*" hidden>
+      </div>
+
+      <div id="file-info" class="file-info hidden">
+        <span id="file-name"></span>
+        <button id="clear-file" class="btn-small">Clear</button>
+      </div>
+
+      <div class="options-row">
+        <label>
+          Model
+          <select id="model-select"></select>
+        </label>
+        <label>
+          Speakers
+          <input type="number" id="num-speakers" min="0" max="20" value="0" placeholder="auto">
+        </label>
+        <label>
+          Language
+          <input type="text" id="language" placeholder="auto" maxlength="5">
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="enable-diarization">
+          Speaker Diarization
+        </label>
+      </div>
+
+      <button id="upload-btn" class="btn-primary" disabled>Upload &amp; Transcribe</button>
+    </section>
+
+    <!-- Progress Section -->
+    <section id="progress-section" class="card hidden">
+      <h2>Processing</h2>
+      <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+      <p id="progress-stage" class="progress-stage">Waiting...</p>
+      <p id="progress-message" class="progress-message"></p>
+    </section>
+
+    <!-- Transcript Section -->
+    <section id="transcript-section" class="card hidden">
+      <h2>Transcript</h2>
+      <div id="transcript-meta" class="transcript-meta"></div>
+      <div id="transcript-content" class="transcript-content"></div>
+      <div class="download-row">
+        <button id="download-btn" class="btn-primary">Download Transcript</button>
+        <button id="download-audio-btn" class="btn-secondary">Download Audio</button>
+      </div>
+    </section>
+
+    <!-- Job History -->
+    <section id="history-section" class="card">
+      <h2>History</h2>
+      <div id="history-list" class="history-list">
+        <p class="hint">No previous jobs.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

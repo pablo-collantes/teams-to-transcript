@@ -1,0 +1,4 @@
+# Optional: speaker diarization support (heavy - pulls in PyTorch).
+# Requires a HuggingFace token (hf_token) in settings.json.
+pyannote.audio>=3.1
+torchaudio>=2.0.0
